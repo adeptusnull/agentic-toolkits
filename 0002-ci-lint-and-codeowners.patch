@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChatGPT <bot@example.com>
+Date: Tue, 26 Aug 2025 00:27:31 +0000
+Subject: [PATCH] ci: add markdown/yaml linting, CODEOWNERS, and TS type-check workflow
+
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+new file mode 100644
+index 0000000..5e15aa8
+--- /dev/null
++++ b/.github/workflows/lint.yml
+@@ 0,0  +1,36 @@
++name: Lint Docs & YAML
++on:
++  push:
++    paths:
++      - '**/*.md'
++      - '**/*.yml'
++      - '**/*.yaml'
++      - '.yamllint.yaml'
++      - '.github/workflows/lint.yml'
++  pull_request:
++    paths:
++      - '**/*.md'
++      - '**/*.yml'
++      - '**/*.yaml'
++      - '.yamllint.yaml'
++      - '.github/workflows/lint.yml'
++
++jobs:
++  markdownlint:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: '20'
++      - name: Run markdownlint
++        run: npx --yes markdownlint-cli "**/*.md" --ignore node_modules
++
++  yamllint:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Run yamllint
++        uses: ibiqlik/action-yamllint@v3
++        with:
++          config_file: .yamllint.yaml
+diff --git a/.yamllint.yaml b/.yamllint.yaml
+new file mode 100644
+index 0000000..6e1b27b
+--- /dev/null
++++ b/.yamllint.yaml
+@@ 0,0  +1,10 @@
++extends: default
++
++rules:
++  line-length:
++    max: 140
++    level: warning
++  truthy:
++    level: error
++  document-start: disable
++  comments-indentation: disable
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+new file mode 100644
+index 0000000..82c206e
+--- /dev/null
++++ b/.github/CODEOWNERS
+@@ 0,0  +1,5 @@
++# Default owners for everything
++* @adeptusnull
++
++# You can add path-specific owners like:
++# /toolkits/secure-prompting/ @adeptusnull
+diff --git a/toolkits/secure-prompting/tsconfig.json b/toolkits/secure-prompting/tsconfig.json
+new file mode 100644
+index 0000000..089b9fd
+--- /dev/null
++++ b/toolkits/secure-prompting/tsconfig.json
+@@ 0,0  +1,13 @@
++{
++  "compilerOptions": {
++    "target": "ES2020",
++    "module": "ES2020",
++    "moduleResolution": "node",
++    "strict": true,
++    "esModuleInterop": true,
++    "forceConsistentCasingInFileNames": true,
++    "skipLibCheck": true,
++    "noEmit": true
++  },
++  "include": ["src/**/*.ts", "tests/**/*.ts"]
++}
+diff --git a/.github/workflows/tsc.yml b/.github/workflows/tsc.yml
+new file mode 100644
+index 0000000..5b7d3a6
+--- /dev/null
++++ b/.github/workflows/tsc.yml
+@@ 0,0  +1,25 @@
++name: TypeScript Type Check
++on:
++  push:
++    paths:
++      - 'toolkits/secure-prompting/**'
++      - '.github/workflows/tsc.yml'
++  pull_request:
++    paths:
++      - 'toolkits/secure-prompting/**'
++      - '.github/workflows/tsc.yml'
++
++jobs:
++  tsc:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: '20'
++      - name: Install deps
++        working-directory: toolkits/secure-prompting
++        run: npm ci || npm install
++      - name: Type check
++        working-directory: toolkits/secure-prompting
++        run: npx tsc --noEmit
+
+-- 
+2.45.0
