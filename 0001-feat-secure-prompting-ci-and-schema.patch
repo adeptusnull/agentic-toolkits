@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChatGPT <bot@example.com>
+Date: Tue, 26 Aug 2025 00:22:31 +0000
+Subject: [PATCH] feat(secure-prompting): add CI workflow, schema, normalization utils and tests
+
+diff --git a/.github/workflows/secure-prompting-tests.yml b/.github/workflows/secure-prompting-tests.yml
+new file mode 100644
+index 0000000..347b429
+--- /dev/null
++++ b/.github/workflows/secure-prompting-tests.yml
+@@ 0,0  +1,26 @@
++name: Secure Prompting Tests
++on:
++  push:
++    paths:
++      - 'toolkits/secure-prompting/**'
++      - '.github/workflows/secure-prompting-tests.yml'
++  pull_request:
++    paths:
++      - 'toolkits/secure-prompting/**'
++      - '.github/workflows/secure-prompting-tests.yml'
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Use Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: '20'
++      - name: Install deps
++        working-directory: toolkits/secure-prompting
++        run: npm ci || npm install
++      - name: Run tests
++        working-directory: toolkits/secure-prompting
++        run: npm test --silent
+diff --git a/.github/PULL_REQUEST_TEMPLATE.md b/.github/PULL_REQUEST_TEMPLATE.md
+new file mode 100644
+index 0000000..e4b8252
+--- /dev/null
++++ b/.github/PULL_REQUEST_TEMPLATE.md
+@@ 0,0  +1,15 @@
++### Goal
++
++### Changes
++
++### Risks & Mitigations
++
++### Verification
++- [ ] Unit tests (if applicable)
++- [ ] Screenshots/logs (if applicable)
++
++### Prompt Safety Checklist (if LLM-related)
++- [ ] Inputs normalized (Unicode NFKC, control chars stripped)
++- [ ] No opaque payloads pasted into prompts
++- [ ] Secrets not exposed in prompts/logs
++- [ ] Data swimlane labeled (private / third-party / public)
+diff --git a/agents/shared/schemas/agent.schema.json b/agents/shared/schemas/agent.schema.json
+new file mode 100644
+index 0000000..9359e2f
+--- /dev/null
++++ b/agents/shared/schemas/agent.schema.json
+@@ 0,0  +1,15 @@
++{
++  "$schema": "https://json-schema.org/draft/2020-12/schema",
++  "title": "Agent Instruction Schema",
++  "type": "object",
++  "required": ["name", "version"],
++  "properties": {
++    "name": { "type": "string", "minLength": 1 },
++    "version": { "type": "string" },
++    "principles": { "type": "array", "items": { "type": "string" } },
++    "modes": { "type": "object" },
++    "calibration": { "type": "object" },
++    "output_templates": { "type": "object" }
++  },
++  "additionalProperties": true
++}
+diff --git a/toolkits/secure-prompting/src/normalize.ts b/toolkits/secure-prompting/src/normalize.ts
+new file mode 100644
+index 0000000..7655b4a
+--- /dev/null
++++ b/toolkits/secure-prompting/src/normalize.ts
+@@ 0,0  +1,64 @@
++/**
++ * Secure input normalization utilities.
++ * - Unicode NFKC normalization
++ * - Strip control characters
++ * - Collapse whitespace
++ * - Optional length clamp
++ */
++export interface NormalizeOptions {
++  clamp?: number; // maximum length after normalization
++  collapseWhitespace?: boolean; // default true
++}
++
++export function normalizeInput(input: string, opts: NormalizeOptions = {}): string {
++  const { clamp, collapseWhitespace = true } = opts;
++  let s = input == null ? "" : String(input);
++
++  // Unicode normalization
++  s = s.normalize("NFKC");
++
++  // Strip C0 control chars (except newline/tab if needed later)
++  s = s.replace(/[\u0000-\u001F]/g, "");
++
++  // Collapse whitespace to single spaces if requested
++  if (collapseWhitespace) {
++    s = s.replace(/\s+/g, " ").trim();
++  } else {
++    s = s.trim();
++  }
++
++  // Optional clamp
++  if (typeof clamp === "number" && clamp > 0 && s.length > clamp) {
++    s = s.slice(0, clamp);
++  }
++
++  return s;
++}
++
++/**
++ * Ensure the prompt contains no raw binary or obvious base64 blobs beyond a threshold.
++ * Returns a tuple [safe, reason]
++ */
++export function heuristicsPromptSafety(input: string): [boolean, string] {
++  const s = normalizeInput(input, { collapseWhitespace: true, clamp: 20000 });
++
++  // Heuristic: detect long base64-like runs
++  const base64Like = /(?:[A-Za-z0-9+/]{64,}={0,2})/;
++  if (base64Like.test(s)) {
++    return [false, "Possible embedded base64 payload detected"];
++  }
++
++  // Heuristic: morse-like payloads
++  const morseLike = /^(?:[\.\-\s]{40,})$/m;
++  if (morseLike.test(s)) {
++    return [false, "Morse-like payload detected"];
++  }
++
++  // Heuristic: zero-width chars (guard pre-NFKC)
++  const zeroWidth = /[\u200B-\u200D\u2060\uFEFF]/;
++  if (zeroWidth.test(input)) {
++    return [false, "Zero-width characters detected"];
++  }
++
++  return [true, "OK"];
++}
+diff --git a/toolkits/secure-prompting/tests/normalize.test.ts b/toolkits/secure-prompting/tests/normalize.test.ts
+new file mode 100644
+index 0000000..7ae55a1
+--- /dev/null
++++ b/toolkits/secure-prompting/tests/normalize.test.ts
+@@ 0,0  +1,32 @@
++import { normalizeInput, heuristicsPromptSafety } from "../src/normalize";
++
++describe("normalizeInput", () => {
++  it("normalizes unicode and strips control chars", () => {
++    const s = "ＡＢＣ\u0001\u0002\u0003";
++    expect(normalizeInput(s)).toBe("ABC");
++  });
++
++  it("collapses whitespace by default", () => {
++    const s = "a\t\t b\n\n c";
++    expect(normalizeInput(s)).toBe("a b c");
++  });
++
++  it("respects clamp", () => {
++    const s = "x".repeat(100);
++    expect(normalizeInput(s, { clamp: 10 })).toBe("x".repeat(10));
++  });
++});
++
++describe("heuristicsPromptSafety", () => {
++  it("flags base64-like payload", () => {
++    const payload = "A".repeat(64);
++    const [ok, reason] = heuristicsPromptSafety(payload);
++    expect(ok).toBe(false);
++    expect(reason).toMatch(/base64/i);
++  });
++
++  it("accepts normal text", () => {
++    const [ok] = heuristicsPromptSafety("hello world");
++    expect(ok).toBe(true);
++  });
++});
+diff --git a/toolkits/secure-prompting/package.json b/toolkits/secure-prompting/package.json
+new file mode 100644
+index 0000000..64cf8e4
+--- /dev/null
++++ b/toolkits/secure-prompting/package.json
+@@ 0,0  +1,14 @@
++{
++  "name": "secure-prompting-toolkit",
++  "version": "0.1.0",
++  "type": "module",
++  "scripts": {
++    "test": "jest"
++  },
++  "devDependencies": {
++    "@types/jest": "^29.5.12",
++    "jest": "^29.7.0",
++    "ts-jest": "^29.2.5",
++    "typescript": "^5.5.4"
++  }
++}
+diff --git a/toolkits/secure-prompting/jest.config.cjs b/toolkits/secure-prompting/jest.config.cjs
+new file mode 100644
+index 0000000..1208b30
+--- /dev/null
++++ b/toolkits/secure-prompting/jest.config.cjs
+@@ 0,0  +1,6 @@
++module.exports = {
++  testEnvironment: "node",
++  transform: {
++    "^.+\\.tsx?$": ["ts-jest", {}],
++  },
++};
+
+-- 
+2.45.0
